@@ -1,0 +1,14 @@
+# Database
+psycopg2-binary>=2.9.10
+python-dotenv>=1.0.1
+
+# Fake data generation
+Faker>=26.0.0
+
+# AI APIs
+voyageai>=0.2.3
+anthropic>=0.39.0
+
+# UI
+streamlit>=1.38.0
+pandas>=2.2.2
