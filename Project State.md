@@ -1,8 +1,8 @@
 # Clinic Analysis — Project State
 
 **Generated:** 2026-04-11
-**Last commit:** `846d79b` Replace voyageai SDK with direct HTTP in app.py (Python 3.14 fix)
-**Current phase:** Working prototype + 4 new features + GitHub repo + Streamlit Cloud deploy in progress
+**Last commit:** `4a49530` docs: update project state snapshot (post-deploy session)
+**Current phase:** ✅ Working prototype LIVE on Streamlit Community Cloud. All 7 tabs verified. Ready to build next feature.
 
 ---
 
@@ -31,12 +31,14 @@ This is the engine behind the Practice Intelligence System — it powers what wi
 
 ## Streamlit Community Cloud deployment
 
-- **Status:** In progress — app is booting on Streamlit Cloud but hitting a `DATABASE_URL` configuration issue in the Secrets box (malformed DSN, not a code bug)
+- **Status:** ✅ **LIVE** (Apr 11)
+- **Repo:** https://github.com/WALL-E-init/faibrick-clinic-analysis-demo
 - **Cloud Python version:** 3.14 (Streamlit Cloud's current default)
-- **Known gotcha:** `voyageai` SDK transitively uses pydantic.v1 which breaks on Python 3.14. Workaround is already in place — `app.py` uses plain HTTP to `api.voyageai.com/v1/embeddings` via `requests`. The local `embed_*.py` scripts still use the SDK (they run on Python 3.13 where it works).
+- **Python 3.14 gotcha (resolved):** the `voyageai` SDK transitively uses `pydantic.v1` which breaks on 3.14. Fix is in `app.py::_embed_query` — it calls `https://api.voyageai.com/v1/embeddings` directly via `requests`. The local `embed_*.py` scripts still use the SDK (they run on Python 3.13 where it works).
+- **Secrets:** `lib/db.py` falls back to `st.secrets` when `.env` is absent. Template in `.streamlit/secrets.toml.example`. Secrets live in the app's Settings → Secrets page on share.streamlit.io.
+- **DB connection:** Must be Supabase **Session pooler** URL (port 5432, format `postgresql://postgres.PROJECTREF:PASSWORD@aws-0-REGION.pooler.supabase.com:5432/postgres`). Direct connection is IPv6-only and fails from Streamlit Cloud.
+- **Auto-redeploy:** every `git push` to `main` triggers a rebuild (~30-60s).
 - **Deploy guide:** `W:\projects\faibrick\docs\guides\2026-04-10-Streamlit-Cloud-Deploy.md`
-- **Secrets mechanism:** `lib/db.py` falls back to `st.secrets` when `.env` is absent. Template in `.streamlit/secrets.toml.example`.
-- **Next step to finish:** Vali needs to paste a clean Supabase **Session pooler** URL into the Streamlit Cloud Secrets page (not Direct — direct is IPv6-only).
 
 ---
 
@@ -77,19 +79,22 @@ This is the engine behind the Practice Intelligence System — it powers what wi
 ### Baked-in lost revenue scenarios
 
 #### Clinical leaks (`lib/fake_clinic.py`)
-| %   | Signal                                     |
-| --- | ------------------------------------------ |
-| 8%  | FTA (failed to attend) appointments        |
-| 10% | Cancelled appointments                     |
-| 5%  | Churned (archived) patients                |
-| 20% | Overdue for recall                         |
-| 12% | Unpaid invoices                            |
-| 25% | Uncompleted treatment plan items           |
+
+| %   | Signal                              |
+| --- | ----------------------------------- |
+| 8%  | FTA (failed to attend) appointments |
+| 10% | Cancelled appointments              |
+| 5%  | Churned (archived) patients         |
+| 20% | Overdue for recall                  |
+| 12% | Unpaid invoices                     |
+| 25% | Uncompleted treatment plan items    |
 
 #### Email leaks (`lib/fake_emails.py`)
+
 30% treatment inquiries unreplied · 25% cancellations unreplied · 10% complaints unreplied · 5% inbound from non-patients
 
 #### Call leaks (`lib/fake_calls.py`)
+
 Emergency 90% returned · **Treatment inquiry 50% returned** · Complaint 80% · Appointment inquiry 70% · General 35%
 
 ---
@@ -137,18 +142,18 @@ Clinic_Analysis/                       ← git repo root
 
 ## Tech Stack
 
-| Layer             | Tech                                   | Why                                                         |
-| ----------------- | -------------------------------------- | ----------------------------------------------------------- |
-| Database          | Supabase cloud Postgres + pgvector     | No Docker, matches production, free tier                    |
-| Fake clinic data  | Python + Faker                         | Deterministic, fast, free                                   |
-| Fake emails/calls | Claude Haiku 4.5 (parallel, 5 workers) | More realistic than templates                               |
-| Embeddings (seed) | Voyage AI voyage-3-lite SDK (512 dim)  | Free 200M tokens, IVFFlat cosine index                      |
-| Embeddings (UI)   | Voyage AI via plain HTTP `requests`    | Python 3.14 on Streamlit Cloud breaks voyageai SDK          |
-| Analysis + cases  | Claude Sonnet 4.6                      | Narrative generation                                        |
-| Message drafts    | Claude Haiku 4.5                       | Cheap, fast, good for short messages                        |
-| UI                | Streamlit                              | Fast prototyping, Python-native                             |
-| Connection        | psycopg2 via Session pooler            | IPv4-compatible, fast bulk insert                           |
-| Deployment        | Streamlit Community Cloud (free tier)  | Public URL for Mihai/Rudolf without local Python install    |
+| Layer             | Tech                                   | Why                                                      |
+| ----------------- | -------------------------------------- | -------------------------------------------------------- |
+| Database          | Supabase cloud Postgres + pgvector     | No Docker, matches production, free tier                 |
+| Fake clinic data  | Python + Faker                         | Deterministic, fast, free                                |
+| Fake emails/calls | Claude Haiku 4.5 (parallel, 5 workers) | More realistic than templates                            |
+| Embeddings (seed) | Voyage AI voyage-3-lite SDK (512 dim)  | Free 200M tokens, IVFFlat cosine index                   |
+| Embeddings (UI)   | Voyage AI via plain HTTP `requests`    | Python 3.14 on Streamlit Cloud breaks voyageai SDK       |
+| Analysis + cases  | Claude Sonnet 4.6                      | Narrative generation                                     |
+| Message drafts    | Claude Haiku 4.5                       | Cheap, fast, good for short messages                     |
+| UI                | Streamlit                              | Fast prototyping, Python-native                          |
+| Connection        | psycopg2 via Session pooler            | IPv4-compatible, fast bulk insert                        |
+| Deployment        | Streamlit Community Cloud (free tier)  | Public URL for Mihai/Rudolf without local Python install |
 
 ---
 
@@ -183,40 +188,38 @@ Once data is seeded, re-running `app.py` is instant. Re-running `generate_*.py` 
 
 ## Key decisions
 
-| Decision                                               | Date   | Why                                                        |
-| ------------------------------------------------------ | ------ | ---------------------------------------------------------- |
-| Build prototype against Supabase cloud + fake data     | Apr 10 | Stop waiting on blockers, prove end-to-end architecture    |
-| Streamlit Community Cloud (not Vercel/Render)          | Apr 10 | Python-native, zero config, free tier                      |
-| New lib modules (timeline, case_study, actions)        | Apr 10 | Keep app.py thin, reusable for future UI variations        |
-| Claude Haiku for drafted messages (not Sonnet)         | Apr 10 | Cheap per-row, short output is well within Haiku quality   |
-| Candidate ranking formula for case study (SQL scoring) | Apr 10 | Deterministic, surfaces best sales stories without LLM     |
+| Decision                                               | Date   | Why                                                         |
+| ------------------------------------------------------ | ------ | ----------------------------------------------------------- |
+| Build prototype against Supabase cloud + fake data     | Apr 10 | Stop waiting on blockers, prove end-to-end architecture     |
+| Streamlit Community Cloud (not Vercel/Render)          | Apr 10 | Python-native, zero config, free tier                       |
+| New lib modules (timeline, case_study, actions)        | Apr 10 | Keep app.py thin, reusable for future UI variations         |
+| Claude Haiku for drafted messages (not Sonnet)         | Apr 10 | Cheap per-row, short output is well within Haiku quality    |
+| Candidate ranking formula for case study (SQL scoring) | Apr 10 | Deterministic, surfaces best sales stories without LLM      |
 | Replace voyageai SDK with HTTP in web app only         | Apr 11 | voyageai transitively breaks on Python 3.14 via pydantic.v1 |
-| Git init at Clinic_Analysis (not faibrick root)        | Apr 10 | Streamlit Cloud needs a repo at the app root               |
+| Git init at Clinic_Analysis (not faibrick root)        | Apr 10 | Streamlit Cloud needs a repo at the app root                |
 | TIMESTAMPTZ everywhere in timeline (UTC for DATE cols) | Apr 10 | Python refuses to sort mixed naive/aware datetimes          |
 
 ---
 
 ## Known issues
 
-| Issue                                             | Impact                                | Workaround                                       |
-| ------------------------------------------------- | ------------------------------------- | ------------------------------------------------ |
-| Voyage AI free tier: 3 RPM / 10K TPM              | Embedding crashed at seed time        | Added payment method (still 200M free tokens)    |
-| Supabase direct connection is IPv6-only           | DNS fails on Windows AND Streamlit Cloud | Use Session pooler URL                        |
-| psycopg2-binary 2.9.9 no wheels on Python 3.13    | pip install failure                   | Bumped to `>=2.9.10`                             |
-| voyageai SDK broken on Python 3.14                | Streamlit Cloud boot crash            | Web app now uses `requests` HTTP; SDK local only |
-| Claude Haiku tier 1 rate limit (10K OTPM)         | Gen takes 10-15 min for 2000 rows     | Accept or upgrade tier                           |
-| Timezone mismatch in timeline sort                | App crash on any patient              | Fixed Apr 10 — `_date_to_aware_dt()` helper      |
-| Streamlit Cloud `DATABASE_URL` secret is malformed| App boots but all DB queries fail     | Vali to paste correct Session pooler URL         |
+| Issue                                                 | Impact                                   | Workaround                                       |
+| ----------------------------------------------------- | ---------------------------------------- | ------------------------------------------------ |
+| Voyage AI free tier: 3 RPM / 10K TPM                  | Embedding crashed at seed time           | Added payment method (still 200M free tokens)    |
+| Supabase direct connection is IPv6-only               | DNS fails on Windows AND Streamlit Cloud | Use Session pooler URL                           |
+| psycopg2-binary 2.9.9 no wheels on Python 3.13        | pip install failure                      | Bumped to `>=2.9.10`                             |
+| voyageai SDK broken on Python 3.14                    | Streamlit Cloud boot crash               | Web app now uses `requests` HTTP; SDK local only |
+| Claude Haiku tier 1 rate limit (10K OTPM)             | Gen takes 10-15 min for 2000 rows        | Accept or upgrade tier                           |
+| Timezone mismatch in timeline sort                    | App crash on any patient                 | Fixed Apr 10 — `_date_to_aware_dt()` helper      |
+| Streamlit Cloud `DATABASE_URL` was malformed (Apr 11) | App booted but DB queries failed         | ✅ Fixed — clean Session pooler URL pasted       |
 
 ---
 
 ## What's next
 
-### Immediate (to ship the public demo)
+### Public demo status
 
-1. **Fix the DATABASE_URL secret on Streamlit Cloud** — paste a clean Session pooler URL from Supabase dashboard (all on one line, no line breaks)
-2. Verify all 7 tabs work end-to-end on the live URL
-3. Share the URL with Mihai and Rudolf
+✅ **Live and verified.** All 7 tabs working end-to-end on Streamlit Community Cloud.
 
 ### High-impact features to add next
 
