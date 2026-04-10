@@ -6,8 +6,13 @@ python-dotenv>=1.0.1
 Faker>=26.0.0
 
 # AI APIs
+# voyageai SDK is only needed for the local embed scripts (embed.py,
+# embed_emails.py, embed_calls.py). The Streamlit app uses plain HTTP via
+# `requests` because voyageai transitively imports pydantic.v1 which
+# currently breaks on Python 3.14.
 voyageai>=0.2.3
 anthropic>=0.39.0
+requests>=2.31.0
 
 # UI
 streamlit>=1.38.0

@@ -13,8 +13,8 @@ Four tabs:
 from __future__ import annotations
 
 import pandas as pd
+import requests
 import streamlit as st
-import voyageai
 
 from lib.analysis import claude_lost_revenue_narrative, lost_revenue_metrics
 from lib.case_study import generate_case_study, list_candidates, pick_candidate
@@ -245,12 +245,36 @@ def load_call_detail(call_id: int) -> dict | None:
 
 
 def _embed_query(query: str) -> str | None:
+    """Embed a single query with Voyage AI via plain HTTP.
+
+    We deliberately avoid the voyageai SDK here because it transitively uses
+    pydantic.v1, which breaks on Python 3.14 (Streamlit Community Cloud's
+    current default). The local embed scripts still use the SDK because they
+    run on Python 3.13.
+    """
     if not VOYAGE_API_KEY:
-        st.error("VOYAGE_API_KEY missing in .env")
+        st.error("VOYAGE_API_KEY missing in .env / Streamlit secrets")
         return None
-    client = voyageai.Client(api_key=VOYAGE_API_KEY)
-    result = client.embed([query], model="voyage-3-lite", input_type="query")
-    return str(result.embeddings[0])
+    try:
+        resp = requests.post(
+            "https://api.voyageai.com/v1/embeddings",
+            headers={
+                "Authorization": f"Bearer {VOYAGE_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "input": [query],
+                "model": "voyage-3-lite",
+                "input_type": "query",
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        embedding = resp.json()["data"][0]["embedding"]
+    except Exception as e:  # noqa: BLE001
+        st.error(f"Voyage embedding failed: {e}")
+        return None
+    return str(embedding)
 
 
 def semantic_search_patients(query: str, k: int = 10) -> pd.DataFrame:
