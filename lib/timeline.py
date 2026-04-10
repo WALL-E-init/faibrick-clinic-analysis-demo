@@ -14,10 +14,22 @@ Sorted newest-first by default. Use sort_ascending=True for oldest-first.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from lib.db import get_conn
+
+
+def _date_to_aware_dt(d) -> datetime | None:
+    """Convert a DATE to a timezone-aware datetime at midnight UTC.
+
+    Needed because appointments/emails/calls come from TIMESTAMPTZ columns
+    (already tz-aware), while invoices.dated_on and recalls.due_date are plain
+    DATE columns. Python won't sort a list that mixes naive and aware datetimes.
+    """
+    if d is None:
+        return None
+    return datetime.combine(d, datetime.min.time(), tzinfo=timezone.utc)
 
 
 def get_patient_timeline(
@@ -77,8 +89,7 @@ def get_patient_timeline(
             (patient_id, limit_per_source),
         )
         for inv in cur.fetchall():
-            dated = inv["dated_on"]
-            ts = datetime.combine(dated, datetime.min.time()) if dated else None
+            ts = _date_to_aware_dt(inv["dated_on"])
             if inv["paid"]:
                 icon = "💷"
                 title = f"Invoice paid: £{float(inv['amount'] or 0):,.2f}"
@@ -190,8 +201,7 @@ def get_patient_timeline(
             (patient_id, limit_per_source),
         )
         for r in cur.fetchall():
-            due = r["due_date"]
-            ts = datetime.combine(due, datetime.min.time()) if due else None
+            ts = _date_to_aware_dt(r["due_date"])
             status = r["status"] or ""
             icon = "🔔" if status.lower() not in ("missed", "unbooked") else "⚠️"
             events.append({
