@@ -12,16 +12,33 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 
-# Load .env from project root (one level up from lib/)
+# Load .env from project root (one level up from lib/). Locally this gives us
+# credentials. On Streamlit Community Cloud the .env file is absent — we fall
+# back to `st.secrets` instead (configured via the Cloud dashboard).
 ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(ENV_PATH)
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-VOYAGE_API_KEY = os.getenv("VOYAGE_API_KEY")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+
+def _secret(name: str) -> str | None:
+    """Try os.environ first, then Streamlit secrets if available."""
+    value = os.getenv(name)
+    if value:
+        return value
+    try:
+        import streamlit as st  # lazy — avoids forcing streamlit at import time
+        if name in st.secrets:
+            return str(st.secrets[name])
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+DATABASE_URL = _secret("DATABASE_URL")
+SUPABASE_URL = _secret("SUPABASE_URL")
+SUPABASE_ANON_KEY = _secret("SUPABASE_ANON_KEY")
+SUPABASE_SERVICE_ROLE_KEY = _secret("SUPABASE_SERVICE_ROLE_KEY")
+VOYAGE_API_KEY = _secret("VOYAGE_API_KEY")
+ANTHROPIC_API_KEY = _secret("ANTHROPIC_API_KEY")
 
 
 def require_env():

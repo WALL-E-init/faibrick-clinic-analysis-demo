@@ -17,7 +17,9 @@ import streamlit as st
 import voyageai
 
 from lib.analysis import claude_lost_revenue_narrative, lost_revenue_metrics
+from lib.case_study import generate_case_study, list_candidates, pick_candidate
 from lib.db import VOYAGE_API_KEY, get_conn
+from lib.timeline import get_patient_timeline
 
 st.set_page_config(
     page_title="Faibrick — Clinic Analysis",
@@ -392,9 +394,23 @@ with st.sidebar:
         st.error(f"DB connection failed: {e}")
 
 
-tab_browse, tab_search, tab_emails, tab_calls, tab_revenue = st.tabs(
-    ["👥 Patients", "🔍 Semantic search", "📧 Emails", "📞 Calls", "💰 Lost revenue"]
-)
+(
+    tab_browse,
+    tab_search,
+    tab_emails,
+    tab_calls,
+    tab_revenue,
+    tab_case_study,
+    tab_actions,
+) = st.tabs([
+    "👥 Patients",
+    "🔍 Semantic search",
+    "📧 Emails",
+    "📞 Calls",
+    "💰 Lost revenue",
+    "📖 Case study",
+    "📋 Action queues",
+])
 
 
 # ---------------------------------------------------------------------------
@@ -462,6 +478,36 @@ with tab_browse:
                 if detail["summary"]:
                     st.info(detail["summary"])
 
+                with st.expander("🕑 Unified timeline (all sources, newest first)", expanded=True):
+                    try:
+                        tl = get_patient_timeline(patient_id)
+                    except Exception as ex:  # noqa: BLE001
+                        st.error(f"Timeline error: {ex}")
+                        tl = []
+                    if not tl:
+                        st.caption("No timeline events for this patient.")
+                    else:
+                        st.caption(
+                            f"{len(tl)} events — combining appointments, emails, calls, "
+                            f"invoices, and recalls."
+                        )
+                        current_month = None
+                        for ev in tl:
+                            month_key = ev["ts"].strftime("%B %Y")
+                            if month_key != current_month:
+                                st.markdown(f"**{month_key}**")
+                                current_month = month_key
+                            date_str = ev["ts"].strftime("%d %b")
+                            st.markdown(
+                                f"<div style='padding: 4px 0 4px 16px; "
+                                f"border-left: 2px solid #444; margin-left: 8px;'>"
+                                f"<span style='color:#888;'>{date_str}</span> &nbsp; "
+                                f"{ev['icon']} <b>{ev['title']}</b><br>"
+                                f"<span style='color:#aaa; font-size: 0.85em;'>"
+                                f"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{ev['subtitle']}</span>"
+                                f"</div>",
+                                unsafe_allow_html=True,
+                            )
                 with st.expander("Appointments", expanded=False):
                     st.dataframe(pd.DataFrame(detail["appointments"]), use_container_width=True)
                 with st.expander("Treatment plans", expanded=False):
@@ -964,3 +1010,210 @@ with tab_revenue:
         with st.spinner("Claude is thinking..."):
             narrative = claude_lost_revenue_narrative(m)
         st.markdown(narrative)
+
+
+# ---------------------------------------------------------------------------
+# Tab 6: Case study generator
+# ---------------------------------------------------------------------------
+
+with tab_case_study:
+    st.subheader("Patient case study")
+    st.caption(
+        "Picks a real patient with a juicy lost-revenue story and asks Claude to "
+        "write it up as a sales case study. The best demo asset in the app."
+    )
+
+    try:
+        top_candidates = list_candidates(limit=15)
+    except Exception as e:  # noqa: BLE001
+        st.error(f"Could not load candidates: {e}")
+        top_candidates = []
+
+    if not top_candidates:
+        st.info(
+            "No lost-revenue candidates found yet. Make sure you've run "
+            "`generate_data.py`, `generate_emails.py`, and `generate_calls.py`."
+        )
+    else:
+        st.markdown("**Top 15 patients by estimated lost value:**")
+        cand_df = pd.DataFrame([
+            {
+                "id": c["patient_id"],
+                "name": c["name"],
+                "lost_value": f"£{float(c['lost_value']):,.0f}",
+                "unpaid": f"£{float(c['unpaid_value']):,.0f}",
+                "uncompleted_tp": f"£{float(c['uncompleted_value']):,.0f}",
+                "tx_email_unreplied": c["tx_email_count"],
+                "tx_call_missed": c["tx_call_count"],
+                "missed_calls": c["missed_call_count"],
+            }
+            for c in top_candidates
+        ])
+        st.dataframe(cand_df, use_container_width=True, hide_index=True, height=300)
+
+        st.divider()
+        c_left, c_right = st.columns([1, 3])
+        with c_left:
+            if st.button("🎲 Pick a random story", type="primary"):
+                cand = pick_candidate(randomize=True)
+                if cand:
+                    st.session_state["case_study_pid"] = cand["patient_id"]
+                    st.session_state.pop("case_study_text", None)
+        with c_right:
+            manual_id = st.number_input(
+                "…or enter a specific patient id",
+                min_value=1,
+                value=int(top_candidates[0]["patient_id"]),
+                step=1,
+            )
+            if st.button("Use this patient"):
+                st.session_state["case_study_pid"] = int(manual_id)
+                st.session_state.pop("case_study_text", None)
+
+        pid = st.session_state.get("case_study_pid")
+        if pid:
+            st.info(f"Building case study for patient **{pid}** …")
+            if "case_study_text" not in st.session_state:
+                with st.spinner("Claude is writing the narrative..."):
+                    try:
+                        st.session_state["case_study_text"] = generate_case_study(pid)
+                    except Exception as e:  # noqa: BLE001
+                        st.session_state["case_study_text"] = f"Error: {e}"
+            st.markdown("---")
+            st.markdown(st.session_state["case_study_text"])
+            if st.button("🔁 Regenerate"):
+                st.session_state.pop("case_study_text", None)
+                st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Tab 7: Action queues (with Claude-drafted messages)
+# ---------------------------------------------------------------------------
+
+with tab_actions:
+    from lib.actions import (
+        callback_queue,
+        draft_message,
+        invoice_queue,
+        recall_queue,
+    )
+
+    st.subheader("Action queues")
+    st.caption(
+        "Three daily work lists with AI-drafted personalized messages. "
+        "Click **Draft message** to generate, then simulate **Approve & send**."
+    )
+
+    # Init session store for drafts and sent items
+    if "action_drafts" not in st.session_state:
+        st.session_state["action_drafts"] = {}
+    if "action_sent" not in st.session_state:
+        st.session_state["action_sent"] = set()
+
+    queue_tab1, queue_tab2, queue_tab3 = st.tabs([
+        "🔔 Recall outreach",
+        "📞 Missed callbacks",
+        "💷 Invoice chasing",
+    ])
+
+    def render_queue(queue_name: str, rows: list[dict], context_builder):
+        if not rows:
+            st.info("Queue is empty — nothing to do here!")
+            return
+        st.caption(f"{len(rows)} items in queue. Top priority first.")
+        for i, row in enumerate(rows):
+            key = f"{queue_name}:{row['action_id']}"
+            sent = key in st.session_state["action_sent"]
+            with st.container(border=True):
+                c1, c2 = st.columns([4, 1])
+                with c1:
+                    st.markdown(f"**{row['patient_name']}** — {row['headline']}")
+                    st.caption(row["detail"])
+                with c2:
+                    if sent:
+                        st.success("✅ Sent")
+                    else:
+                        if st.button("✍️ Draft", key=f"draft_{key}"):
+                            with st.spinner("Claude drafting…"):
+                                ctx = context_builder(row)
+                                msg = draft_message(queue_name, row, ctx)
+                                st.session_state["action_drafts"][key] = msg
+                                st.rerun()
+                if key in st.session_state["action_drafts"] and not sent:
+                    st.text_area(
+                        "Draft message",
+                        value=st.session_state["action_drafts"][key],
+                        height=160,
+                        key=f"msg_{key}",
+                    )
+                    bc1, bc2, _ = st.columns([1, 1, 3])
+                    with bc1:
+                        if st.button("✅ Approve & send", key=f"send_{key}", type="primary"):
+                            st.session_state["action_sent"].add(key)
+                            st.rerun()
+                    with bc2:
+                        if st.button("🔁 Redraft", key=f"redraft_{key}"):
+                            del st.session_state["action_drafts"][key]
+                            st.rerun()
+
+    with queue_tab1:
+        st.markdown("### Patients overdue for recall")
+        st.caption(
+            "Active patients with no future appointment whose last visit was 6+ months ago. "
+            "Prioritised by time since last visit."
+        )
+        try:
+            recalls = recall_queue(limit=15)
+        except Exception as e:  # noqa: BLE001
+            st.error(f"Could not load recall queue: {e}")
+            recalls = []
+
+        def recall_ctx(row):
+            return (
+                f"{row['patient_name']} last visited on {row['last_visit']} "
+                f"({row['months_since']} months ago). "
+                f"Dentist: {row.get('dentist') or 'the clinic'}. "
+                f"They are on the {row.get('payment_plan') or 'standard'} plan."
+            )
+        render_queue("recall", recalls, recall_ctx)
+
+    with queue_tab2:
+        st.markdown("### Missed inbound calls never returned")
+        st.caption(
+            "Missed or voicemail calls from patients (or unknown numbers) that "
+            "were never called back. Treatment inquiries and emergencies first."
+        )
+        try:
+            callbacks = callback_queue(limit=15)
+        except Exception as e:  # noqa: BLE001
+            st.error(f"Could not load callback queue: {e}")
+            callbacks = []
+
+        def callback_ctx(row):
+            return (
+                f"Call from {row['from_name']} at {row['started_at']}. "
+                f"Category: {row['category']}. "
+                f"Summary: {row['summary'] or '—'}. "
+                f"{'Left a voicemail.' if row['state'] == 'voicemail' else 'Call was missed.'}"
+            )
+        render_queue("callback", callbacks, callback_ctx)
+
+    with queue_tab3:
+        st.markdown("### Invoices to chase")
+        st.caption(
+            "Unpaid invoices, biggest first. Claude will draft a polite but firm "
+            "collections message."
+        )
+        try:
+            invoices = invoice_queue(limit=15)
+        except Exception as e:  # noqa: BLE001
+            st.error(f"Could not load invoice queue: {e}")
+            invoices = []
+
+        def invoice_ctx(row):
+            return (
+                f"{row['patient_name']} has an unpaid invoice of £{row['amount_outstanding']:,.2f} "
+                f"(ref {row['reference']}) issued on {row['dated_on']}, due on {row['due_on']}. "
+                f"Currently {row['days_overdue']} days overdue."
+            )
+        render_queue("invoice", invoices, invoice_ctx)
